@@ -73,10 +73,11 @@ def should_continue(state: AgentState) -> str:
 
 
 async def tool_executor(state: AgentState) -> dict:
-    """工具执行节点 — 并行执行所有工具调用"""
+    """工具执行节点 — 执行工具调用，失败时立即标记终止"""
     messages = state["messages"]
     last_message = messages[-1]
     tool_messages = []
+    has_failure = False
 
     from agent.tools import ALL_TOOLS
     tool_map = {tool.name: tool for tool in ALL_TOOLS}
@@ -91,19 +92,22 @@ async def tool_executor(state: AgentState) -> dict:
                 result = await tool_func.ainvoke(tool_args)
                 tool_messages.append(ToolMessage(content=str(result), tool_call_id=tool_call["id"]))
             except Exception as e:
+                has_failure = True
                 err_msg = str(e)
-                # 如果是 API 限流，明确告知不要再重试
                 if "rate limit" in err_msg.lower() or "request limit" in err_msg.lower():
-                    err_msg = f"API今日请求次数已用完，无法获取新数据。请基于已有缓存数据回答，告诉用户明天再试。"
-                tool_messages.append(ToolMessage(content=f"工具执行失败: {err_msg}", tool_call_id=tool_call["id"]))
+                    err_msg = "API今日额度用完，无法获取新数据，请直接基于已有信息回答。"
+                tool_messages.append(ToolMessage(content=f"失败: {err_msg}", tool_call_id=tool_call["id"]))
         else:
             tool_messages.append(
                 ToolMessage(content=f"未知工具: {tool_name}", tool_call_id=tool_call["id"])
             )
 
+    # 任何工具失败 → 强制结束，不再重试
+    next_count = 999 if has_failure else state.get("tool_calls_count", 0) + 1
+
     return {
         "messages": tool_messages,
-        "tool_calls_count": state.get("tool_calls_count", 0) + 1,
+        "tool_calls_count": next_count,
     }
 
 
