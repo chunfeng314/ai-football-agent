@@ -1,4 +1,4 @@
-import { Box, Typography, Avatar, Chip } from '@mui/material';
+import { Box, Typography, Avatar } from '@mui/material';
 import type { SquadPlayer } from '../../types';
 
 // 阵型定义：name → 11 个位置的 (x%, y%) 坐标

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Container, Typography, Grid, Paper, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, CircularProgress, Box,
-  FormControl, InputLabel, Select, MenuItem, Chip,
+  FormControl, Select, MenuItem, Chip,
 } from '@mui/material';
 import { useDashboardStore, useSeasonStore } from '../stores/dashboardStore';
 import { SeasonSelector } from '../components/common/SeasonSelector';
@@ -18,8 +18,8 @@ const LEAGUES = [
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const { league, standings, topScorers, loading, error, loadDashboard } = useDashboardStore();
-  const { season, setSeason } = useSeasonStore();
+  const { standings, topScorers, loading, error, loadDashboard } = useDashboardStore();
+  const { season } = useSeasonStore();
   const [leagueId, setLeagueId] = useState(39);
 
   useEffect(() => {

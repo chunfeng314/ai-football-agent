@@ -3,7 +3,7 @@ import {
   Container, Typography, Grid, Paper, Box, List, ListItem,
   ListItemAvatar, Avatar, ListItemText, Chip, Button, TextField,
   FormControl, Select, MenuItem, CircularProgress, IconButton,
-  Dialog, DialogTitle, DialogContent, Divider,
+  Dialog, DialogTitle, DialogContent,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SportsSoccerIcon from '@mui/icons-material/SportsSoccer';

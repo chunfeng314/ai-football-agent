@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Container, Typography, Grid, Paper, Box, List, ListItem,
-  ListItemAvatar, Avatar, ListItemText, Chip, CircularProgress,
+  ListItemAvatar, Avatar, ListItemText, Chip,
   ToggleButtonGroup, ToggleButton, FormControl, Select, MenuItem,
   Badge,
 } from '@mui/material';
@@ -18,7 +17,6 @@ const LEAGUES = [
 ];
 
 export default function TacticsPage() {
-  const navigate = useNavigate();
   const { teams, loadDashboard } = useDashboardStore();
   const { squad, loadSquad } = useTeamStore();
   const { season } = useSeasonStore();
