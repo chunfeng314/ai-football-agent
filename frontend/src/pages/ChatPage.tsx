@@ -2,9 +2,12 @@ import { useRef, useState, useEffect } from 'react';
 import {
   Container, Typography, Paper, TextField, Button, Box,
   CircularProgress, Chip, Card, CardContent, IconButton,
+  Drawer, List, ListItem, ListItemText, ListItemButton,
 } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import StopIcon from '@mui/icons-material/Stop';
+import AddIcon from '@mui/icons-material/Add';
+import HistoryIcon from '@mui/icons-material/History';
 import { useChatStore } from '../stores/chatStore';
 import type { AgentResponse, FollowUpOption } from '../types';
 
@@ -20,13 +23,17 @@ export default function ChatPage() {
   const {
     messages, streaming, streamContent, streamAgentResponse,
     toolStatus, error, sendMessage, clearChat, abortStream,
+    threadId, threads, newThread, switchThread, loadThreads,
   } = useChatStore();
   const [input, setInput] = useState('');
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamContent]);
+    loadThreads();
+  }, [messages.length]);
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, streamContent]);
 
   const handleSend = () => {
     if (!input.trim() || streaming) return;
@@ -34,16 +41,51 @@ export default function ChatPage() {
     setInput('');
   };
 
-  const handleFollowUp = (option: FollowUpOption) => {
-    sendMessage(option.prompt);
-  };
+  const handleFollowUp = (option: FollowUpOption) => { sendMessage(option.prompt); };
 
   return (
     <Container maxWidth="md" className="py-6 h-[calc(100vh-100px)] flex flex-col">
       <Box className="flex items-center justify-between mb-4">
-        <Typography variant="h4" className="font-bold">🤖 AI 足球分析师</Typography>
-        <Button size="small" color="inherit" onClick={clearChat}>清空对话</Button>
+        <Box className="flex items-center gap-2">
+          <Typography variant="h4" className="font-bold">AI 对话</Typography>
+          <Chip label={`#${threadId.slice(-6)}`} size="small" variant="outlined" />
+        </Box>
+        <Box className="flex gap-2">
+          <Button size="small" startIcon={<HistoryIcon />} onClick={() => { loadThreads(); setDrawerOpen(true); }}>
+            历史
+          </Button>
+          <Button size="small" startIcon={<AddIcon />} onClick={newThread}>
+            新对话
+          </Button>
+          <Button size="small" color="inherit" onClick={clearChat}>清空</Button>
+        </Box>
       </Box>
+
+      {/* 历史对话抽屉 */}
+      <Drawer anchor="right" open={drawerOpen} onClose={() => setDrawerOpen(false)}>
+        <Box sx={{ width: 280, p: 2 }}>
+          <Typography variant="h6" className="font-bold mb-2">历史对话</Typography>
+          <List dense>
+            {threads.map((t) => (
+              <ListItemButton
+                key={t.thread_id}
+                selected={t.thread_id === threadId}
+                onClick={() => { switchThread(t.thread_id); setDrawerOpen(false); }}
+              >
+                <ListItemText
+                  primary={`对话 ${t.thread_id.slice(-6)}`}
+                  secondary={`${t.message_count} 条消息 · ${t.last_message?.slice(0, 16)}`}
+                />
+              </ListItemButton>
+            ))}
+            {threads.length === 0 && (
+              <Typography variant="body2" color="text.secondary" className="text-center mt-4">
+                暂无历史对话
+              </Typography>
+            )}
+          </List>
+        </Box>
+      </Drawer>
 
       {/* 消息列表 */}
       <Paper className="flex-1 p-4 overflow-auto mb-3" variant="outlined">

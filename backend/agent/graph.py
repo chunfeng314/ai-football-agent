@@ -3,6 +3,8 @@ from typing import TypedDict, Annotated
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
+import os
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
@@ -130,31 +132,30 @@ def build_agent_graph():
     """构建 LangGraph Agent"""
     workflow = StateGraph(AgentState)
 
-    # 添加节点
     workflow.add_node("agent", agent_node)
     workflow.add_node("tools", tool_executor)
     workflow.add_node("synthesize", synthesize_node)
 
-    # 设置入口
     workflow.set_entry_point("agent")
 
-    # 条件路由: agent → tools or synthesize
     workflow.add_conditional_edges(
         "agent",
         should_continue,
         {"tools": "tools", "end": "synthesize"},
     )
 
-    # tools → 回到 agent（让 agent 决定是否继续调工具）
     workflow.add_edge("tools", "agent")
-
-    # synthesize → 结束
     workflow.add_edge("synthesize", END)
 
-    # 内存 checkpointer（支持对话记忆）
-    memory = MemorySaver()
+    # SQLite 持久化 checkpointer（支持多轮对话记忆）
+    db_dir = os.path.join(os.path.dirname(__file__), "..", "data")
+    os.makedirs(db_dir, exist_ok=True)
+    db_path = os.path.join(db_dir, "agent_memory.db")
+    checkpointer = SqliteSaver.from_conn_string(db_path)
+    # from_conn_string 返回 context manager，需要 enter
+    checkpointer = checkpointer.__enter__()
 
-    return workflow.compile(checkpointer=memory)
+    return workflow.compile(checkpointer=checkpointer)
 
 
 # ===== 创建全局 Agent =====
