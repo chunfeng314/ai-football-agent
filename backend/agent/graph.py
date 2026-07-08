@@ -56,12 +56,17 @@ async def agent_node(state: AgentState) -> dict:
     return {"messages": [response]}
 
 
+MAX_TOOL_ITERATIONS = 3
+
 def should_continue(state: AgentState) -> str:
-    """路由决策: 继续调用工具 or 结束"""
+    """路由决策: 继续调用工具 or 结束（最多3轮工具调用）"""
     messages = state["messages"]
     last_message = messages[-1]
 
-    # 如果 LLM 请求调用工具
+    # 防止无限循环：最多 3 轮工具调用
+    if state.get("tool_calls_count", 0) >= MAX_TOOL_ITERATIONS:
+        return "end"
+
     if hasattr(last_message, "tool_calls") and last_message.tool_calls:
         return "tools"
     return "end"
@@ -86,7 +91,11 @@ async def tool_executor(state: AgentState) -> dict:
                 result = await tool_func.ainvoke(tool_args)
                 tool_messages.append(ToolMessage(content=str(result), tool_call_id=tool_call["id"]))
             except Exception as e:
-                tool_messages.append(ToolMessage(content=f"工具调用错误: {str(e)}", tool_call_id=tool_call["id"]))
+                err_msg = str(e)
+                # 如果是 API 限流，明确告知不要再重试
+                if "rate limit" in err_msg.lower() or "request limit" in err_msg.lower():
+                    err_msg = f"API今日请求次数已用完，无法获取新数据。请基于已有缓存数据回答，告诉用户明天再试。"
+                tool_messages.append(ToolMessage(content=f"工具执行失败: {err_msg}", tool_call_id=tool_call["id"]))
         else:
             tool_messages.append(
                 ToolMessage(content=f"未知工具: {tool_name}", tool_call_id=tool_call["id"])

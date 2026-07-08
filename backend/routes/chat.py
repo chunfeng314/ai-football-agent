@@ -22,13 +22,19 @@ async def chat_simple(request: Request):
 
 @router.get("/chat/stream")
 async def chat_stream(
+    request: Request,
     message: str = Query(..., description="用户消息"),
     thread_id: str = Query(default="default", description="对话线程 ID"),
 ):
-    """SSE 流式 Agent 对话"""
+    """SSE 流式 Agent 对话（支持客户端断开自动停止）"""
+
     async def event_generator():
         try:
             async for event in stream_agent(message, thread_id):
+                # 客户端断开连接 → 立即停止
+                if await request.is_disconnected():
+                    break
+
                 event_type = event["type"]
                 event_data = json.dumps(event["data"], ensure_ascii=False)
                 yield f"event: {event_type}\ndata: {event_data}\n\n"
@@ -36,9 +42,13 @@ async def chat_stream(
                 if event_type == "error":
                     break
 
-                # 小延迟，防止事件过快
-                await asyncio.sleep(0.05)
+                if event_type == "done":
+                    break
 
+                await asyncio.sleep(0.03)
+
+        except asyncio.CancelledError:
+            pass  # 客户端断开时正常退出
         except Exception as e:
             yield f"event: error\ndata: {{\"message\": \"{str(e)}\"}}\n\n"
 
