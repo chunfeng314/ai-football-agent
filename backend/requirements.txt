@@ -21,6 +21,6 @@ cachetools>=5.0.0
 # Claude API
 anthropic>=0.36.0
 
-# 开发
-pytest>=8.0.0
-pytest-asyncio>=0.24.0
+# 部署
+gunicorn>=22.0.0
+redis>=5.0.0

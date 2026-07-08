@@ -1,59 +1,95 @@
-"""SQLite 持久化缓存 — 数据不会因重启丢失"""
-import sqlite3
+"""混合缓存 — Redis（生产）/ SQLite（本地）自动切换"""
 import hashlib
 import json
 import time
 import os
 import functools
-from typing import Callable
+import sqlite3
+from typing import Callable, Optional
 
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "cache.db")
+# ===== SQLite 后端 =====
+
+SQLITE_DB = os.path.join(os.path.dirname(__file__), "..", "data", "cache.db")
 
 
-def _get_db() -> sqlite3.Connection:
-    db_dir = os.path.dirname(DB_PATH)
-    os.makedirs(db_dir, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS cache (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            expires_at REAL NOT NULL,
-            created_at REAL NOT NULL DEFAULT (strftime('%s', 'now'))
-        )
-    """)
+def _sqlite_conn():
+    os.makedirs(os.path.dirname(SQLITE_DB), exist_ok=True)
+    conn = sqlite3.connect(SQLITE_DB)
+    conn.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value TEXT, expires_at REAL)")
     conn.commit()
     return conn
 
 
-def cache_get(key: str) -> object | None:
-    """从 SQLite 缓存读取"""
+# ===== Redis 后端 =====
+
+_redis_client: Optional[object] = None
+
+
+def _get_redis():
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
     try:
-        conn = _get_db()
-        row = conn.execute(
-            "SELECT value, expires_at FROM cache WHERE key = ?", (key,)
-        ).fetchone()
+        import redis
+        r = redis.Redis(
+            host=os.getenv("REDIS_HOST", "redis"),
+            port=int(os.getenv("REDIS_PORT", "6379")),
+            password=os.getenv("REDIS_PASSWORD") or None,
+            socket_timeout=2,
+            decode_responses=True,
+        )
+        r.ping()  # 测试连接
+        _redis_client = r
+        return r
+    except Exception:
+        _redis_client = False  # 标记不可用
+        return None
+
+
+# ===== 统一接口 =====
+
+def cache_get(key: str) -> Optional[object]:
+    # 优先 Redis
+    r = _get_redis()
+    if r:
+        try:
+            val = r.get(key)
+            return json.loads(val) if val else None
+        except Exception:
+            pass
+
+    # 降级 SQLite
+    try:
+        conn = _sqlite_conn()
+        row = conn.execute("SELECT value, expires_at FROM cache WHERE key = ?", (key,)).fetchone()
         conn.close()
         if row is None:
             return None
-        value_json, expires_at = row
-        if time.time() > expires_at:
-            # 过期了，删除
-            conn2 = _get_db()
+        if time.time() > row[1]:
+            conn2 = _sqlite_conn()
             conn2.execute("DELETE FROM cache WHERE key = ?", (key,))
             conn2.commit()
             conn2.close()
             return None
-        return json.loads(value_json)
+        return json.loads(row[0])
     except Exception:
         return None
 
 
-def cache_set(key: str, value: object, ttl: int = 300):
-    """写入 SQLite 缓存"""
+def cache_set(key: str, value: object, ttl: int = 3600):
+    # 优先 Redis
+    r = _get_redis()
+    if r:
+        try:
+            r.setex(key, ttl, json.dumps(value, default=str, ensure_ascii=False))
+            return
+        except Exception:
+            pass
+
+    # 降级 SQLite
     try:
-        conn = _get_db()
+        conn = _sqlite_conn()
         conn.execute(
             "INSERT OR REPLACE INTO cache (key, value, expires_at) VALUES (?, ?, ?)",
             (key, json.dumps(value, default=str, ensure_ascii=False), time.time() + ttl),
@@ -65,9 +101,20 @@ def cache_set(key: str, value: object, ttl: int = 300):
 
 
 def cache_invalidate(prefix: str = ""):
-    """清除缓存"""
+    r = _get_redis()
+    if r:
+        try:
+            if prefix:
+                for k in r.keys(f"{prefix}*"):
+                    r.delete(k)
+            else:
+                r.flushdb()
+            return
+        except Exception:
+            pass
+
     try:
-        conn = _get_db()
+        conn = _sqlite_conn()
         if prefix:
             conn.execute("DELETE FROM cache WHERE key LIKE ?", (f"{prefix}%",))
         else:
@@ -79,21 +126,27 @@ def cache_invalidate(prefix: str = ""):
 
 
 def cache_stats() -> dict:
-    """缓存统计"""
-    try:
-        conn = _get_db()
-        total = conn.execute("SELECT COUNT(*) FROM cache").fetchone()[0]
-        valid = conn.execute(
-            "SELECT COUNT(*) FROM cache WHERE expires_at > ?", (time.time(),)
-        ).fetchone()[0]
-        conn.close()
-        return {"total_entries": total, "valid_entries": valid, "expired_entries": total - valid}
-    except Exception:
-        return {"total_entries": 0, "valid_entries": 0, "expired_entries": 0}
+    r = _get_redis()
+    if r:
+        try:
+            size = r.dbsize()
+            return {"backend": "redis", "total_entries": size, "valid_entries": size}
+        except Exception:
+            pass
 
+    try:
+        conn = _sqlite_conn()
+        total = conn.execute("SELECT COUNT(*) FROM cache").fetchone()[0]
+        valid = conn.execute("SELECT COUNT(*) FROM cache WHERE expires_at > ?", (time.time(),)).fetchone()[0]
+        conn.close()
+        return {"backend": "sqlite", "total_entries": total, "valid_entries": valid, "expired_entries": total - valid}
+    except Exception:
+        return {"backend": "unknown", "total_entries": 0}
+
+
+# ===== 装饰器（不变）=====
 
 def ttl_cache(prefix: str, ttl: int | None = None):
-    """装饰器：为异步函数添加 SQLite 持久化缓存"""
     def decorator(func: Callable):
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
@@ -105,7 +158,7 @@ def ttl_cache(prefix: str, ttl: int | None = None):
                 return cached
 
             result = await func(*args, **kwargs)
-            cache_set(cache_key, result, ttl=ttl or 3600)  # 默认 1 小时
+            cache_set(cache_key, result, ttl=ttl or 3600)
             return result
         return wrapper
     return decorator

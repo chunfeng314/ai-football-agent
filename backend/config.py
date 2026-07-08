@@ -26,8 +26,11 @@ class Settings:
     # API-Football
     APIFOOTBALL_BASE_URL: str = "https://v3.football.api-sports.io"
 
-    # 缓存 TTL（秒）
-    CACHE_TTL: int = int(os.getenv("CACHE_TTL", "300"))
+    # 缓存
+    CACHE_TTL: int = int(os.getenv("CACHE_TTL", "3600"))
+    REDIS_HOST: str = os.getenv("REDIS_HOST", "redis")
+    REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
+    REDIS_PASSWORD: str = os.getenv("REDIS_PASSWORD", "")
 
     # 常用联赛 ID
     LEAGUES: dict = {
