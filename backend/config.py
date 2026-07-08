@@ -5,12 +5,19 @@ load_dotenv()
 
 
 class Settings:
-    # API Keys
-    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
-    APIFOOTBALL_KEY: str = os.getenv("APIFOOTBALL_KEY", "")
+    # LLM 配置 — 支持 DeepSeek / Claude / OpenAI
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "deepseek")  # deepseek / claude
 
-    # Claude 模型
+    # DeepSeek
+    DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
+    DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+
+    # Claude（备选）
+    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
     CLAUDE_MODEL: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
+
+    # API-Football
+    APIFOOTBALL_KEY: str = os.getenv("APIFOOTBALL_KEY", "")
 
     # 服务器
     HOST: str = os.getenv("HOST", "0.0.0.0")
@@ -32,7 +39,7 @@ class Settings:
         "champions_league": 2,
     }
 
-    # 当前赛季（2024-25）
+    # 当前赛季
     CURRENT_SEASON: int = int(os.getenv("CURRENT_SEASON", "2024"))
 
 

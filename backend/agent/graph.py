@@ -4,6 +4,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
+from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from config import settings
 from agent.prompts import SYSTEM_PROMPT
@@ -22,13 +23,22 @@ class AgentState(TypedDict):
 # ===== LLM 配置 =====
 
 def get_llm():
-    """获取 Claude LLM 实例"""
-    return ChatAnthropic(
-        model=settings.CLAUDE_MODEL,
-        api_key=settings.ANTHROPIC_API_KEY,
-        temperature=0.3,
-        max_tokens=4096,
-    )
+    """根据配置选择 DeepSeek 或 Claude"""
+    if settings.LLM_PROVIDER == "deepseek":
+        return ChatOpenAI(
+            model=settings.DEEPSEEK_MODEL,
+            api_key=settings.DEEPSEEK_API_KEY,
+            base_url="https://api.deepseek.com/v1",
+            temperature=0.3,
+            max_tokens=4096,
+        )
+    else:
+        return ChatAnthropic(
+            model=settings.CLAUDE_MODEL,
+            api_key=settings.ANTHROPIC_API_KEY,
+            temperature=0.3,
+            max_tokens=4096,
+        )
 
 
 def get_llm_with_tools():
