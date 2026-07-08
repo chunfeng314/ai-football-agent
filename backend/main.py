@@ -42,11 +42,12 @@ async def health():
 
 
 # 注册路由
-from routes import dashboard, teams, players, chat
+from routes import dashboard, teams, players, chat, match
 app.include_router(dashboard.router, prefix="/api")
 app.include_router(teams.router, prefix="/api")
 app.include_router(players.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
+app.include_router(match.router, prefix="/api")
 
 
 if __name__ == "__main__":

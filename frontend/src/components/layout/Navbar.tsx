@@ -4,6 +4,7 @@ import SportsSoccerIcon from '@mui/icons-material/SportsSoccer';
 
 const NAV_ITEMS = [
   { label: '📊 仪表盘', path: '/dashboard' },
+  { label: '⭐ 我的球队', path: '/myteam' },
   { label: '⚽ 球队', path: '/team/40' },
   { label: '👤 球员', path: '/player/306' },
   { label: '🎯 战术', path: '/tactics' },
