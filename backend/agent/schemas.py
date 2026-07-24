@@ -31,10 +31,10 @@ class FollowUpOption(BaseModel):
 
 
 class AgentResponse(BaseModel):
-    """Agent 五段式结构化输出"""
-    summary: str = Field(description="一句话总结")
-    data_overview: DataOverview = Field(description="📊 数据概览")
-    deep_analysis: str = Field(description="🎯 深度分析")
-    recommendation: Recommendation = Field(description="✅ 推荐方案")
-    alternatives: list[str] = Field(default_factory=list, description="🔄 备选方案")
-    follow_up_options: list[FollowUpOption] = Field(default_factory=list, description="📋 后续追问方向")
+    """Agent 五段式结构化输出：总结 / KPI 概览 / 深度洞察 / 可操作建议 / 追问引导"""
+    summary: str = Field(description="总结：一句话总结，点明核心结论")
+    data_overview: DataOverview = Field(description="KPI 概览：2-4 个关键数字 KPI + 一句话数据总结")
+    deep_analysis: str = Field(description="深度洞察：数据背后的含义，纵向/横向对比，趋势解读")
+    recommendation: Recommendation = Field(description="可操作建议：基于数据的核心建议（标题/理由/预期效果/行动项）")
+    alternatives: list[str] = Field(default_factory=list, description="备选方案：1-2 个替代方案（如果条件不同）")
+    follow_up_options: list[FollowUpOption] = Field(default_factory=list, description="追问引导：2-3 个可继续追问的方向")

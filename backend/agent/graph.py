@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, Tool
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from config import settings
-from agent.prompts import SYSTEM_PROMPT
+from agent.prompts import SYSTEM_PROMPT, DECISION_SYSTEM_PROMPT
 from agent.tools import ALL_TOOLS
 from agent.schemas import AgentResponse
 
@@ -54,7 +54,12 @@ def get_llm_with_tools():
 async def agent_node(state: AgentState) -> dict:
     """Agent 决策节点 — 决定调用工具还是给出最终回复"""
     llm = get_llm_with_tools()
-    response = await llm.ainvoke(state["messages"])
+    messages = state["messages"]
+    # 注入决策引导 system prompt：仅在本地副本前插一次，不写回 state，
+    # 避免工具循环多轮经过本节点时在状态中重复累积 SystemMessage
+    if not any(isinstance(m, SystemMessage) for m in messages):
+        messages = [SystemMessage(content=DECISION_SYSTEM_PROMPT)] + list(messages)
+    response = await llm.ainvoke(messages)
     return {"messages": [response]}
 
 
@@ -92,16 +97,16 @@ async def tool_executor(state: AgentState) -> dict:
         if tool_func:
             try:
                 result = await tool_func.ainvoke(tool_args)
-                tool_messages.append(ToolMessage(content=str(result), tool_call_id=tool_call["id"]))
+                tool_messages.append(ToolMessage(content=str(result), tool_call_id=tool_call["id"], name=tool_call["name"]))
             except Exception as e:
                 has_failure = True
                 err_msg = str(e)
                 if "rate limit" in err_msg.lower() or "request limit" in err_msg.lower():
                     err_msg = "API今日额度用完，无法获取新数据，请直接基于已有信息回答。"
-                tool_messages.append(ToolMessage(content=f"失败: {err_msg}", tool_call_id=tool_call["id"]))
+                tool_messages.append(ToolMessage(content=f"失败: {err_msg}", tool_call_id=tool_call["id"], name=tool_call["name"]))
         else:
             tool_messages.append(
-                ToolMessage(content=f"未知工具: {tool_name}", tool_call_id=tool_call["id"])
+                ToolMessage(content=f"未知工具: {tool_name}", tool_call_id=tool_call["id"], name=tool_name)
             )
 
     # 任何工具失败 → 强制结束，不再重试
@@ -113,17 +118,71 @@ async def tool_executor(state: AgentState) -> dict:
     }
 
 
+def _format_agent_response_markdown(resp: AgentResponse) -> str:
+    """将 AgentResponse 渲染为 Markdown 纯文本（供 token 事件 / 消息持久化兜底使用）"""
+    parts = [resp.summary]
+
+    kpis = resp.data_overview.kpis if resp.data_overview else []
+    if kpis:
+        kpi_lines = [f"- {k.label}: {k.value}" + (f"（{k.trend}）" if k.trend else "") for k in kpis]
+        parts.append("📊 **KPI 概览**\n" + "\n".join(kpi_lines))
+    if resp.data_overview and resp.data_overview.summary:
+        parts.append(resp.data_overview.summary)
+
+    if resp.deep_analysis:
+        parts.append(f"🎯 **深度洞察**\n{resp.deep_analysis}")
+
+    rec = resp.recommendation
+    if rec:
+        rec_text = f"✅ **可操作建议：{rec.title}**\n{rec.reasoning}"
+        if rec.expected_impact:
+            rec_text += f"\n预期效果：{rec.expected_impact}"
+        if rec.action_items:
+            rec_text += "\n" + "\n".join(f"- {item}" for item in rec.action_items)
+        parts.append(rec_text)
+
+    if resp.alternatives:
+        parts.append("🔄 **备选方案**\n" + "\n".join(f"- {alt}" for alt in resp.alternatives))
+
+    if resp.follow_up_options:
+        parts.append("📋 **追问引导**\n" + "\n".join(f"- {opt.label}" for opt in resp.follow_up_options))
+
+    return "\n\n".join(parts)
+
+
 async def synthesize_node(state: AgentState) -> dict:
-    """综合节点 — 将工具结果 + 系统提示 转为结构化输出"""
+    """综合节点 — 用 with_structured_output 产出 AgentResponse，失败时降级为纯文本"""
     llm = get_llm()
 
     # 构建 synthesize prompt
     synth_messages = [
-        SystemMessage(content=SYSTEM_PROMPT + "\n\n现在，基于前面的数据，给出最终的五段式分析回复。用中文。"),
+        SystemMessage(content=SYSTEM_PROMPT + "\n\n现在，基于前面的数据，给出最终的五段式分析回复（总结 / KPI 概览 / 深度洞察 / 可操作建议 / 追问引导）。用中文。"),
     ] + state["messages"]
 
+    # 优先走结构化输出（function calling，DeepSeek / Claude 均支持）
+    agent_response = None
+    try:
+        structured_llm = llm.with_structured_output(AgentResponse)
+        parsed = await structured_llm.ainvoke(synth_messages)
+        # 防御：个别 provider/版本可能返回 dict 而非 Pydantic 实例
+        if isinstance(parsed, AgentResponse):
+            agent_response = parsed
+        elif isinstance(parsed, dict):
+            agent_response = AgentResponse.model_validate(parsed)
+    except Exception:
+        agent_response = None
+
+    if agent_response is not None:
+        # 结构化成功：写入 agent_response，同时附一条渲染好的 Markdown 消息，
+        # 保证现有 token 事件与消息持久化链路不受影响
+        return {
+            "messages": [AIMessage(content=_format_agent_response_markdown(agent_response))],
+            "agent_response": agent_response,
+        }
+
+    # 降级：结构化解析失败，退回原有纯文本输出，不让请求崩掉
     response = await llm.ainvoke(synth_messages)
-    return {"messages": [response]}
+    return {"messages": [response], "agent_response": None}
 
 
 # ===== 构建 Graph =====
@@ -187,6 +246,7 @@ async def stream_agent(message: str, thread_id: str = "default"):
     - 'tool_start': 开始调用工具
     - 'tool_end': 工具调用完成
     - 'token': LLM 输出 token
+    - 'structured': 结构化输出 AgentResponse（JSON），synthesize 成功后发送一次
     - 'done': 完成
     """
     config = {"configurable": {"thread_id": thread_id}}
@@ -197,6 +257,8 @@ async def stream_agent(message: str, thread_id: str = "default"):
     }
 
     yield {"type": "thinking", "data": {"message": "Agent 开始分析..."}}
+
+    structured_sent = False
 
     try:
         async for event in agent_graph.astream(initial_state, config, stream_mode="values"):
@@ -225,6 +287,20 @@ async def stream_agent(message: str, thread_id: str = "default"):
                         "type": "token",
                         "data": {"content": last_msg.content},
                     }
+
+            # 检测结构化输出（synthesize 节点产出后只发送一次）
+            agent_response = event.get("agent_response")
+            if agent_response is not None and not structured_sent:
+                structured_sent = True
+                if isinstance(agent_response, AgentResponse):
+                    response_payload = agent_response.model_dump()
+                else:
+                    # 防御：checkpointer 反序列化后可能是 dict
+                    response_payload = dict(agent_response)
+                yield {
+                    "type": "structured",
+                    "data": {"response": response_payload},
+                }
 
         yield {"type": "done", "data": {"message": "分析完成"}}
 
